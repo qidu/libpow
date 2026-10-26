@@ -4,10 +4,13 @@ A standalone JavaScript library for the proof-of-work that `chat.deepseek.com` p
 its `chat/completion` and `file/upload_file` endpoints, plus a demo server that issues and
 verifies real challenges so you can watch the whole cycle in one tab.
 
-Extracted from `../native-host/src/deepseek-web/pow-solver.js`, which only ran inside a Node
-native-messaging host. This version has **no Node built-ins at all** — no `node:fs`, no
-`import.meta.url`, no `Buffer` — so the browser can load the same file verbatim, with no bundler
-and no build step.
+**In one sentence:** the server picks a random number in `[0, difficulty)` — the nonce — appends
+it to a known prefix (`salt_expireAt_`) and hashes the result, sending the client that hash but not
+the nonce, so the client has to try numbers in that range one at a time, hashing each candidate,
+until one of them reproduces the hash it was given.
+
+It has **no Node built-ins at all** — no `node:fs`, no `import.meta.url`, no `Buffer` — so the
+browser can load the same file verbatim, with no bundler and no build step.
 
 ```
 libpow/
@@ -319,20 +322,17 @@ This is a demo of the protocol, not a production service.
 - **`verify()` ignores expiry.** It is a hash comparison. Whether a challenge is still valid is a
   policy decision, and `server.js` makes it separately.
 
-## What changed from `native-host/src/deepseek-web/pow-solver.js`
+## Design notes
 
-The algorithm and the ABI handling are unchanged. What differs:
-
-- `createPow(source)` replaces a module-level load from disk, so the caller decides where the
-  bytes come from — the single change that makes the same file work in a page.
+- `createPow(source)` takes the WASM as bytes, an `ArrayBuffer`, a `Response`, a promise for any
+  of those, or a URL to fetch — so the caller decides where the bytes come from. That is the one
+  thing that makes the same file work in a page, a Worker and Node alike.
 - The load helpers use only `fetch` / `Response` / `WebAssembly`, and `import.meta.url` appears
-  nowhere in the library (it is emptied by `esbuild --format=cjs`, a trap documented in the
-  original).
+  nowhere in the library: it is emptied by `esbuild --format=cjs`, which silently breaks
+  URL-based loading in a bundle.
 - `solve()` reports how long an exhausted search took, and its error explains the
   `[0, difficulty)` bound instead of just saying "no solution".
-- Typed, validated inputs with messages naming the offending parameter; `verify()` no longer
-  demands `difficulty`, since it never needs it.
-- `normalizeChallenge()`, `solveChallenge()`, `verifyChallenge()` and `buildPowResponse()` added
-  so a caller holding the raw API object does not have to reshape it by hand.
-
-`../native-host` is untouched — this directory is purely additive.
+- Inputs are validated with messages that name the offending parameter, and `verify()` does not
+  demand `difficulty`, since it never needs it.
+- `normalizeChallenge()`, `solveChallenge()`, `verifyChallenge()` and `buildPowResponse()` save a
+  caller holding the raw API object from reshaping it by hand.

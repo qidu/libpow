@@ -2,12 +2,10 @@
  * ds-pow.js — DeepSeek's `DeepSeekHashV1` proof-of-work, as a standalone
  * library that runs in a browser page, a Web Worker, or plain Node.
  *
- * Extracted from native-host/src/deepseek-web/pow-solver.js, which was
- * written for the Node-only native messaging host. This version has one
- * important difference: it contains **no Node built-ins at all** (`node:fs`,
- * `import.meta.url`, `Buffer` are all absent), so the same file can be served
- * straight to a browser as an ES module. The caller supplies the WASM bytes
- * (or a URL to fetch them from) instead of the module reading a path off disk.
+ * It contains **no Node built-ins at all** — `node:fs`, `import.meta.url` and
+ * `Buffer` are all absent — so the same file can be served straight to a
+ * browser as an ES module. The caller supplies the WASM bytes (or a URL to
+ * fetch them from) rather than the library reading a path off disk.
  *
  * ── What this solves ────────────────────────────────────────────────────────
  *
@@ -72,8 +70,7 @@
  *     is exactly what we're replacing), so we free it — otherwise every hash
  *     leaks ~72 bytes and 20k calls grow WASM memory by 1.4MB.
  *
- * @see README.md in this directory for the full writeup, the probe results,
- *      and the source plan doc (docs/plan-d-deepseek-web-provider.md).
+ * @see README.md in this directory for the full writeup and the probe results.
  */
 
 /** The only PoW algorithm variant this library implements. */
