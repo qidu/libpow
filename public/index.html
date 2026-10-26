@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepSeek PoW Demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --text: #16181d;
+    --muted: #626873;
+    --border: #e2e5ea;
+    --accent: #2f6df6;
+    --accent-text: #ffffff;
+    --ok: #15803d;
+    --ok-bg: #eaf7ee;
+    --bad: #b42318;
+    --bad-bg: #fdeceb;
+    --code-bg: #f0f2f5;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --panel: #171a20;
+      --text: #e8eaee;
+      --muted: #98a0ad;
+      --border: #2a2f38;
+      --accent: #5b8cff;
+      --ok: #6ee79a;
+      --ok-bg: #12291b;
+      --bad: #ff9188;
+      --bad-bg: #2c1614;
+      --code-bg: #1e222a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 16px 64px;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 14px;
+  }
+  .panel h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    margin: 0 0 14px;
+    font-weight: 600;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  label { font-size: 13px; color: var(--muted); }
+  input[type="number"] {
+    width: 120px;
+    padding: 7px 9px;
+    font: 13px var(--mono);
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+  }
+  button {
+    padding: 8px 15px;
+    font: 500 13px inherit;
+    font-family: inherit;
+    color: var(--accent-text);
+    background: var(--accent);
+    border: 1px solid transparent;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.secondary {
+    color: var(--text);
+    background: transparent;
+    border-color: var(--border);
+  }
+  dl { display: grid; grid-template-columns: 108px 1fr; gap: 7px 14px; margin: 0; font-size: 13px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; overflow-wrap: anywhere; }
+  code, .mono { font-family: var(--mono); font-size: 12px; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre {
+    margin: 12px 0 0;
+    padding: 12px 14px;
+    background: var(--code-bg);
+    border-radius: 8px;
+    overflow-x: auto;
+    font: 12px/1.5 var(--mono);
+    max-height: 220px;
+  }
+  pre:empty { display: none; }
+  .verdict { font-weight: 600; padding: 8px 12px; border-radius: 7px; display: none; font-size: 13px; }
+  .verdict.ok { display: block; color: var(--ok); background: var(--ok-bg); }
+  .verdict.bad { display: block; color: var(--bad); background: var(--bad-bg); }
+  .steps { display: flex; flex-direction: column; gap: 14px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>DeepSeekHashV1 proof-of-work</h1>
+  <p class="sub">
+    The <code>ds-pow.js</code> library solving real challenges in your browser, against the
+    Node server that issued them. Everything you see below ran in this tab.
+  </p>
+
+  <div class="panel">
+    <h2>1 &middot; Load the module</h2>
+    <dl id="module-info">
+      <dt>status</dt><dd id="module-status">loading…</dd>
+    </dl>
+    <div class="row" style="margin-top:14px">
+      <button id="btn-selfcheck" class="secondary" disabled>Run known-answer self-check</button>
+      <span class="hint" id="selfcheck-hint"></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>2 &middot; Get a challenge</h2>
+    <div class="row">
+      <label for="difficulty">difficulty (nonce search bound)</label>
+      <input id="difficulty" type="number" value="144000" min="1" max="5000000" step="1000">
+      <button id="btn-challenge" disabled>Fetch from server</button>
+    </div>
+    <dl id="challenge-info" style="margin-top:14px">
+      <dt>challenge</dt><dd id="c-challenge" class="mono">—</dd>
+      <dt>salt</dt><dd id="c-salt" class="mono">—</dd>
+      <dt>expiry</dt><dd id="c-expiry">—</dd>
+    </dl>
+    <pre id="challenge-json"></pre>
+  </div>
+
+  <div class="panel">
+    <h2>3 &middot; Solve, then verify</h2>
+    <div class="row">
+      <button id="btn-solve" disabled>Solve in this tab</button>
+      <button id="btn-verify" class="secondary" disabled>Send answer to server</button>
+    </div>
+    <dl id="solve-info" style="margin-top:14px">
+      <dt>answer</dt><dd id="s-answer" class="mono">—</dd>
+      <dt>solve time</dt><dd id="s-time">—</dd>
+      <dt>hash rate</dt><dd id="s-rate">—</dd>
+    </dl>
+    <div class="verdict" id="verdict"></div>
+    <pre id="verify-json"></pre>
+  </div>
+</main>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

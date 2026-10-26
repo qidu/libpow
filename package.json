@@ -1,0 +1,25 @@
+{
+  "name": "ds-pow",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeekHashV1 proof-of-work as a standalone JS library for browsers, Workers and Node, plus a demo server that issues and verifies challenges.",
+  "main": "./ds-pow.js",
+  "exports": {
+    ".": "./ds-pow.js"
+  },
+  "files": [
+    "ds-pow.js",
+    "sha3_wasm_bg.wasm",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
