@@ -281,7 +281,7 @@ implements the ABI directly. Two conventions are load-bearing, both established 
 - **The WASM owns the string arguments you pass in.** It frees them itself. Freeing them from
   JS is a double-free, and the *next* `wasm_solve` traps with `RuntimeError: unreachable`.
 - **The caller owns the `Vec<u8>` that `wasm_deepseek_hash_v1` returns.** Nothing frees it at
-  this level, so `hash()` releases it with `__wbindgen_free(ptr, len, 1)`. Without that, every
+  this level, so `hash()` releases it with `__wbindgen_export_2(ptr, len, 1)`. Without that, every
   hash leaks ~72 bytes and 20k calls grow WASM memory by ~1.4MB.
 
 Both are covered by regression tests: 20,000 hashes must not grow memory by 256KiB, and the
@@ -303,8 +303,77 @@ alike — there is nothing for a host to supply.
 It is also the one part of this that can break without warning: DeepSeek can rotate the module
 at any time, and a new build may rename or re-sign its exports. `createPow()` validates the six
 exports it needs at load and says so plainly if one is missing, and `selfCheck()` fails loudly
-if the module still loads but computes different hashes. Running `selfCheck()` at startup (as
-`server.js` does) turns "mysterious bad answers" into "refuses to start".
+if the module loads but no longer reproduces the answers its vectors were captured with. Running
+`selfCheck()` at startup (as `server.js` does) turns "mysterious bad answers" into a refusal to
+start. The two sections below are about the limits of that guarantee, and about what to do when
+you want to be outside it.
+
+## Serving the module yourself
+
+Nothing at runtime fetches the module from DeepSeek. The URL above is provenance documentation,
+and the only copy that ever gets loaded is the one you hand to `createPow()`. `public/app.js`
+passes `/sha3_wasm_bg.wasm` and `server.js` serves it same-origin, so this is already the default
+configuration — self-hosting is not a mode you turn on, it is what the demo does.
+
+The host requirements are therefore the browser's, not DeepSeek's:
+
+- **Any origin, path and filename will do.** A page or Worker passes a URL; Node passes bytes.
+- **`Content-Type: application/wasm`** buys the streaming fast path
+  (`WebAssembly.instantiateStreaming`). A wrong type still works — the response is cloned and
+  buffered instead — but it costs an extra copy of the module. A wrong type is the most common
+  reason a hand-hosted `.wasm` breaks under plain `instantiateStreaming`, which is why that
+  fallback exists at all.
+- **Cross-origin needs CORS.** An opaque response cannot be read as bytes, so a CDN must send
+  `Access-Control-Allow-Origin`. If your page sets `Cross-Origin-Embedder-Policy: require-corp`,
+  the module also needs `Cross-Origin-Resource-Policy: cross-origin`.
+- **Stay on the same scheme.** An HTTPS page cannot load the module over HTTP.
+- **The bytes must be the bytes.** No rewriting, re-compressing or bundling step. Pin the size
+  and digest from above, and hash your copy before shipping it. Cache it hard but only under a
+  content-hashed name (`pow.<hash>.wasm`, as DeepSeek's own filename is): a bare `pow.wasm`
+  served `immutable` will not update the day you do swap it.
+- **In Node, pass bytes, not a path.** `fetch()` cannot read a filesystem path, so it is
+  `createPow(await readFile(path))`, which is what `server.js` does.
+
+### Self-hosting without rotation
+
+Rotation is a relationship between the module a client runs and the algorithm the *issuer* used.
+It is not a property of where the bytes are hosted: self-hosting changes the first half of that
+relationship and cannot touch the second. There are two cases, and only one of them lets you
+ignore rotation entirely.
+
+**You issue the challenges too** — `server.js`, or your own service. Now the pairing is closed:
+one module defines the puzzles, checks the answers, and is the only thing you serve. No outside
+party can rotate it, and DeepSeek shipping a new build tomorrow does not affect you at all. This
+is the "without rotating" case, and it needs nothing beyond the checklist above; swap in your own
+algorithm (next section) and it stays true.
+
+**You solve for `chat.deepseek.com`** — then DeepSeek is the issuer and the algorithm is theirs.
+Pinning the bytes is still worth doing: it makes an upgrade your decision rather than a silent
+change, and it survives them renaming or deleting the file. But it does not make you
+rotation-proof. If they change the *algorithm* — as opposed to merely rebuilding the same one —
+your pinned copy produces answers their server rejects.
+
+Note what that implies for the guardrail above. `selfCheck()` proves the file you loaded is the
+file its vectors were captured from; it cannot tell you the *issuer* changed, because the vectors
+are a historical record. They match this build, so they keep passing however far behind the
+server you fall. Nothing in this library detects a server-side rotation except an actual request.
+Treat `selfCheck()` as a check on your deployment, not as a compatibility probe.
+
+## Writing a new hash engine in Rust
+
+An engine is not a special kind of module: it is any WASM module exporting the six names `bind()`
+validates. Nothing in that contract mentions wasm-bindgen or DeepSeek, which is what makes a second
+algorithm an option you can take later rather than a rewrite you have to make now:
+
+- **Keep the vendored module** — the default. It reproduces the algorithm the server checks
+  against, and `selfCheck()` re-checks that at startup.
+- **Write your own engine** when you issue the challenges yourself, so the algorithm is yours to
+  choose and rotation stops being a concept; or when DeepSeek's module changes and you would rather
+  follow it than stay pinned.
+
+The second option is a separate Rust crate that compiles to a ~19KB module with no imports, not a
+change to this library. The ABI in full, a compiling skeleton, the build and verification recipe,
+and how to register a second algorithm are in [`reference/`](reference/).
 
 ## Limitations
 

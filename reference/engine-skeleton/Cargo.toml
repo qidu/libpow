@@ -1,0 +1,16 @@
+[package]
+name = "ds-pow-engine"
+version = "0.1.0"
+edition = "2021"
+
+# Nothing here is wasm-bindgen: a cdylib with `#[no_mangle] pub extern "C"`
+# exports and a release profile tuned for size is the whole build.
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

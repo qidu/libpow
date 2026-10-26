@@ -15,13 +15,13 @@
  * nothing from its host beyond what `WebAssembly.instantiate()` provides by
  * default — so it runs identically in a page, a Worker, and Node. No Worker,
  * no DOM, no glue JS is required; a Worker is still a good idea on a page for
- * the *blocking* reason described under "Threading" below.
+ * the *blocking* reason described under "In a Web Worker" in the README.
  *
  * The vendored binary (`./sha3_wasm_bg.wasm`, byte-for-byte from
  * `https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm`,
  * captured 2026-09-09, sha256 b3fca8cc072c1defbd60c02266a8e48bd307a1804aaff4314900aea720e72f7d)
  * is checked in beside this file. DeepSeek may rotate it at any time — see
- * "Staleness" in the README.
+ * "The vendored WASM" in the README.
  *
  * ── The algorithm ──────────────────────────────────────────────────────────
  *
@@ -412,7 +412,7 @@ async function createPow(source) {
      * synchronously on the calling thread. The search is a brute-force scan of
      * `[0, difficulty)` — ~difficulty/2 hashes on average, `difficulty` worst
      * case, ~0.19µs each — so ~14ms average and ~27ms worst case at
-     * DeepSeek's difficulty of 144000. See "Threading" in README.
+     * DeepSeek's difficulty of 144000. See "In a Web Worker" in the README.
      *
      * @param {{challenge: string, salt: string, expireAt: number, difficulty: number}} params
      * @returns {Promise<number>} the answer nonce, guaranteed `< difficulty`
@@ -497,7 +497,21 @@ async function createPow(source) {
      */
     async selfCheck() {
       for (const vector of KNOWN_VECTORS) {
-        const answer = await pow.solve(vector);
+        let answer;
+        try {
+          answer = await pow.solve(vector);
+        } catch (err) {
+          // The common stale-module failure: a rotated or rewritten module
+          // finds *no* nonce, so solve() throws before the comparison below is
+          // ever reached. Passing that message through would blame the
+          // challenge for what is a module problem, which is the exact
+          // ambiguity this check exists to remove.
+          throw new Error(
+            `ds-pow: self-check failed for ${vector.targetPath}: ${err.message} ` +
+              'The vendored sha3_wasm_bg.wasm may be stale or corrupted, or may implement a ' +
+              'different algorithm than these vectors were captured with.'
+          );
+        }
         if (answer !== vector.answer) {
           throw new Error(
             `ds-pow: self-check failed for ${vector.targetPath}: expected answer=${vector.answer}, got ${answer}. ` +
