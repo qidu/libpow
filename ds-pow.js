@@ -46,8 +46,10 @@
  *   - A challenge is only solvable if the issuer's secret nonce is below the
  *     `difficulty` it advertises. Both captured DeepSeek vectors satisfy this
  *     (answers 98797 and 61041, both difficulty 144000).
- *   - Solve cost is bounded and predictable: ~0.19µs per candidate here, so
- *     difficulty 144000 solves in ~20ms.
+ *   - Solve cost is linear and predictable: the search walks every integer in
+ *     `[0, difficulty)`, so ~difficulty/2 hashes on average and `difficulty`
+ *     in the worst case. Measured at ~0.19µs per candidate (~5.3M/s) here, i.e.
+ *     ~14ms average and ~27ms worst case at difficulty 144000.
  *
  * ── Calling convention (measured against the vendored binary) ──────────────
  *
@@ -410,8 +412,10 @@ async function createPow(source) {
      *
      * Async so that callers do not have to change when a solve is offloaded to
      * a Worker or partitioned across threads; today the search runs
-     * synchronously on the calling thread. Budget ~0.19µs per candidate, i.e.
-     * ~20ms at DeepSeek's difficulty of 144000 — see "Threading" in README.
+     * synchronously on the calling thread. The search is a brute-force scan of
+     * `[0, difficulty)` — ~difficulty/2 hashes on average, `difficulty` worst
+     * case, ~0.19µs each — so ~14ms average and ~27ms worst case at
+     * DeepSeek's difficulty of 144000. See "Threading" in README.
      *
      * @param {{challenge: string, salt: string, expireAt: number, difficulty: number}} params
      * @returns {Promise<number>} the answer nonce, guaranteed `< difficulty`

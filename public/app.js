@@ -135,9 +135,10 @@ ui.solveBtn.addEventListener('click', async () => {
 
   try {
     // Yield a frame first so the button's "solving…" state paints before the
-    // solve blocks the main thread. At difficulty 144000 this takes ~20ms and
-    // is imperceptible; at 5,000,000 it is ~1s of a frozen tab, which is
-    // exactly why the notes in README.md suggest moving this to a Worker.
+    // solve blocks the main thread. At difficulty 144000 this takes ~14ms on
+    // average and ~27ms worst case, which is imperceptible; at 5,000,000 it is
+    // ~0.5-1.0s of a frozen tab, which is exactly why the notes in README.md
+    // suggest moving this to a Worker.
     await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 
     const started = performance.now();

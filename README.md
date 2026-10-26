@@ -84,8 +84,9 @@ dependencies, and nothing to install.
 
 No changes are needed — the library uses no DOM APIs. The reason to bother is not correctness
 but responsiveness: `solve()` blocks whatever thread it runs on. At DeepSeek's `difficulty`
-(144,000) that is ~20ms, which nobody will notice. At 5,000,000 it is ~1s of a frozen page,
-which is why the challenge demo lets you raise the difficulty and feel it.
+(144,000) that is ~14ms on average and ~27ms in the worst case, which nobody will notice. At
+5,000,000 it is ~0.5s average and ~1.0s worst case of a frozen page, which is why the challenge
+demo lets you raise the difficulty and feel it.
 
 ```js
 // worker.js
@@ -168,11 +169,106 @@ Two consequences:
   `server.js`/the tests draw their nonce from `[0, difficulty)` so every minted challenge is
   reachable. Drawing the nonce outside that range is the one bug that produces challenges no
   client can ever solve — and it is exactly what the `status 0` error message points at.
-- **Cost is bounded and predictable**: ~0.19µs per candidate (~5M hashes/s), so 144,000 in
-  ~25ms and 500,000 in ~95ms.
+- **Cost is bounded and predictable**, because the search is linear in `difficulty` — see
+  [Measured cost](#measured-cost) below.
 
 `status 0` carries a meaningless `answer` (it is `0`), so the library throws rather than
 returning it.
+
+### What the client does with that promise: brute force
+
+The issuer's response is really two things: a **promise** ("the nonce I used is somewhere in
+`0 … difficulty-1`") and a **puzzle** ("work out which one").
+
+There is no shortcut on the puzzle. `challenge` is `hash(prefix + nonce)`, and recovering
+`nonce` from it would mean inverting the hash — the exact thing a hash is built to prevent. So
+the only method is to hash candidates and compare, one integer at a time:
+
+```js
+for (let nonce = 0; nonce < difficulty; nonce++) {
+  if (hash(prefix + nonce) === challenge) return nonce;   // one hash, one string comparison
+}
+```
+
+Nothing cleverer exists and nothing cleverer is coming: the digest looks like noise for every
+input, so a candidate can only be checked, not deduced.
+
+Because the issuer draws its nonce uniformly from the range, the match is equally likely to be
+anywhere in it. So on average you meet it halfway, and in the worst case you walk the entire
+range:
+
+```
+average  ~difficulty/2 hashes
+worst    difficulty hashes
+```
+
+The order makes no difference — ascending (what `wasm_solve` does) and random cost the same. A
+random starting point would only defeat someone precomputing the low end of the range.
+
+**That cost is the entire point.** The issuer pays one hash to mint a challenge (it picked the
+nonce first, then hashed it once) and one hash to verify an answer, while the client pays up to
+`difficulty`:
+
+| | hashes computed |
+| --- | --- |
+| server minting a challenge | 1 |
+| server verifying an answer | 1 |
+| client solving it | ~difficulty/2 average, `difficulty` worst case |
+
+At DeepSeek's difficulty that is about one frame of animation on average and ~27ms at worst —
+invisible to a person — but a script has to pay it on *every* request, which is the cost floor
+DeepSeek is buying. It is a speed bump, not a security barrier: it prices abuse rather than
+preventing it.
+
+And this is why the promise has to be true. Nothing *stops* a client from searching past
+`difficulty` — the bound is a loop bound inside `wasm_solve`, not a rule of the protocol, and the
+server never checks `answer < difficulty` when verifying. But a client has no way to know how
+much further to look: one more nonce? A thousand? A million? Every step costs another hash and
+there is still no signal until one matches. **The advertised bound is the only thing that tells
+the search when to stop.** So an issuer that draws its nonce outside the range does not make its
+challenge unsolvable in principle — it makes it unfindable within the agreed budget, which from
+the client's side is indistinguishable from impossible.
+
+### Measured cost
+
+Measured on this machine — Apple M6, Mac18,5 (12 cores), Node v22.23.3, arm64 — solving
+challenges minted by this library's own server. *Average* is the mean of repeated solves with a
+uniformly random nonce, which lands halfway on average (200 draws up to difficulty 500,000, 40
+above that). *Worst* pins the nonce at `difficulty - 1` so the scan runs the entire range; it is
+the max of 5 runs, and unlike the average it repeats almost identically every time:
+
+| difficulty | hashes (avg) | time (avg) | hashes (worst) | time (worst) | i7 estimate (worst) |
+| --- | --- | --- | --- | --- | --- |
+| 10,000 | 5,000 | 1.2ms | 10,000 | 1.9ms | 1.9 – 3.8ms |
+| **144,000** (DeepSeek's) | 72,000 | **14.2ms** | 144,000 | **27.1ms** | **27 – 54ms** |
+| 500,000 | 250,000 | 47.9ms | 500,000 | 93.7ms | 94 – 187ms |
+| 1,000,000 | 500,000 | 91.9ms | 1,000,000 | 187.7ms | 0.19 – 0.38s |
+| 1,500,000 | 750,000 | 149ms | 1,500,000 | 282ms | 0.28 – 0.56s |
+| 2,000,000 | 1,000,000 | 187ms | 2,000,000 | 377ms | 0.38 – 0.75s |
+| 3,000,000 | 1,500,000 | 287ms | 3,000,000 | 568ms | 0.57 – 1.14s |
+| 4,000,000 | 2,000,000 | 383ms | 4,000,000 | 759ms | 0.76 – 1.52s |
+| 5,000,000 (demo cap) | 2,500,000 | 510ms | 5,000,000 | 968ms | 0.97 – 1.94s |
+
+One caveat, and it is the only one: the **average** column is intrinsically noisy, because a
+single solve can land anywhere in the range. At difficulty 10,000 the 200 draws spanned 0.0ms to
+4.1ms, so its mean (1.2ms) sits visibly above the `difficulty/2 ÷ rate` prediction (0.94ms) even
+though the larger rows track the model within a few percent. The **worst** column has none of
+that ambiguity.
+
+**The i7 column is an extrapolation, not a measurement.** The worst-case column implies a flat
+**~5.2–5.3M candidates/s** (0.19µs each) from 10,000 all the way to 5,000,000 — the cost tracks
+`difficulty` with no visible curve — so anyone can re-derive it for their own hardware:
+
+```
+time ≈ candidates / rate
+```
+
+The estimate assumes a desktop-class i7 delivers 0.5×–1.0× this machine's single-thread WASM
+throughput, giving 2.7M–5.3M candidates/s; a slower laptop i7 lands at or below the low end.
+Measure your own rather than trusting the column: the benchmark is about a dozen lines over
+`pow.solve()`, and the two boundary probes that establish the `[0, difficulty)` rule are
+`a nonce just below the bound is still reachable` and `every issued challenge is solvable within
+its advertised bound` in `test/ds-pow.test.js`.
 
 ## Memory ownership — the two rules that make this work
 
@@ -216,9 +312,10 @@ This is a demo of the protocol, not a production service.
 - **No authentication, no rate limiting.** `/api/challenge` mints challenges for anyone.
 - **No CSRF or origin checks.** Fine for `127.0.0.1`, not for a public host. `HOST` defaults to
   `127.0.0.1` for that reason.
-- **The PoW is not a security boundary by itself.** The search is a fixed ~20ms at DeepSeek's
-  difficulty — a speed bump for scripted abuse, not a defence against a determined client, which
-  can simply call the same wasm. Treat it the way DeepSeek does: as a cheap cost floor.
+- **The PoW is not a security boundary by itself.** The search is linear in `difficulty` and costs
+  a few dozen milliseconds at DeepSeek's — a speed bump for scripted abuse, not a defence against
+  a determined client, which can simply call the same wasm. Treat it the way DeepSeek does: as a
+  cheap cost floor.
 - **`verify()` ignores expiry.** It is a hash comparison. Whether a challenge is still valid is a
   policy decision, and `server.js` makes it separately.
 
